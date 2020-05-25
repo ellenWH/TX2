@@ -1,11 +1,39 @@
+/**
+ * UART communication of TX2
+ * 
+ *
+ * Author:  ELLEN
+ * Date:    2020-5-20
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <errno.h>
+#include <pthread.h>
+#include <termios.h>
+#include <sys/mman.h>
+#include <stdbool.h>
+#include "uart_api.h"
+
+frame Frame_FDSP;
+control Frame_Control;
+
+int gDspfd;
+
 int open_port(int com_port)
 {
 	int fd;
+	/*
 #if (COM_TYPE == GNR_COM)
 	char *dev[] = {"/dev/ttyPS1", "/dev/ttyPS0", "/dev/ttyS2"};
 #else
 	char *dev[] = {"/dev/ttyPS1", "/dev/ttyPS0", "/dev/ttyUSB2"};
 #endif
+*/
+	char *dev[] = {"/dev/ttyTHS1", "/dev/ttyTHS1", "/dev/ttyTHS1"};
 
 	if ((com_port < 0) || (com_port > 5))
 	{
@@ -151,55 +179,114 @@ int set_com_config(int fd, int baud_rate, int data_bits, char parity, int stop_b
 	return 0;
 }
 
-
+/* recieve information and analyse it */
 int communication(int fd, char *buff)
 {
 	int i;
 	int CRC = 0;
 	char data[LEN];
-	if ((buff[0] == 0x4B) && (buff[1] == 0x5A)){
-		for (i=0;i<LEN-5;i++)
-		{
-			data[i] = buff[i + 2];
-			CRC += data[i];
-		}
-		if (CRC != buff[LEN-2])
-		{
-			//return 1;
-		}
-		
-		Frame_FDSP.status = data[0];
-	
-		Frame_FDSP.axis_x = data[2];
-		Frame_FDSP.axis_x = Frame_FDSP.axis_x << 8 | data[1];
-		
-		Frame_FDSP.axis_y = data[4];
-		Frame_FDSP.axis_y = Frame_FDSP.axis_y << 8 | data[3];
+	if((buff[0] != 0x7E) || (buff[1] != 0x01) || (buff[31] != 0xE7)){
+		printf("Head/Tail error");
+		return;
+	}
 
-		Frame_FDSP.width = data[6];
-		Frame_FDSP.width = Frame_FDSP.width << 8 | data[5];
-		
-		Frame_FDSP.height = data[8];
-		Frame_FDSP.height = Frame_FDSP.height << 8 | data[7];
-		Frame_FDSP.height/=1.5;
-		printf("status: %d axis_x: %d axis_y: %d width: %d height: %d \n", Frame_FDSP.status, Frame_FDSP.axis_x, Frame_FDSP.axis_y, Frame_FDSP.width, Frame_FDSP.height);
-		
-	}
-	else
+	for (i=0;i<LEN-5;i++)
 	{
-		return 1;
+		data[i] = buff[i + 2];
+		CRC += data[i];
 	}
+#ifdef CRC_CHECK
+	if (CRC != buff[LEN-2])
+	{
+		//return 1;
+	}
+#endif
+	switch(buff[31]){
+		case 0x03:
+			Frame_Control.yaw = (buff[3] << 24) | (buff[4] << 16) | (buff[5] << 8) | buff[6];
+			if(buff[16] == 0x03)
+				Frame_Control.pitch = (buff[17] << 24) | (buff[18] << 16) | (buff[19] << 8) | buff[20];
+			else
+				printf("pitch data error!")
+			
+		break;
+		
+		case 0x04:
+		break;
+		
+		default:
+		break;
+	
+	}
+	Frame_FDSP.status = data[0];
+
+	printf("status: %d axis_x: %d axis_y: %d width: %d height: %d \n", Frame_FDSP.status, Frame_FDSP.axis_x, Frame_FDSP.axis_y, Frame_FDSP.width, Frame_FDSP.height);
+	
+
 	return 0;
 }
 
+int UartSend(){
+	memset(buff_send, 0, LEN);
+	
+	switch(buff[2]){
+		case 0x03:	// positioning
+			buff[2] = 0x03;
 
+		break;
+			
+		case 0x04:	// search
+			buff[2] = 0x04;
+
+			
+		break;
+		
+		case 0x05:	// track
+			buff[2] = 0x05;
+
+
+		break;
+		
+		case 0x06:	// sector scan
+			buff[2] = 0x06;
+
+		break;
+		
+		case 0x07:	// circle
+			buff[2] = 0x07;
+
+		break;
+		
+		case 0x08:	// pre_setting point
+			buff[2] = 0x08;
+		break;
+		
+		case 0x09:
+			buff[2] = 0x09;
+		break;
+		
+		case 0x0A:
+		break;
+		
+		case 0x0B:
+		break;
+		
+		case 0x0C:
+		break;
+		
+		default:
+		break;	
+	}
+	write(gDspfd, buff_send, LEN);
+	
+}
 
 void *_DspThreadProc(void *arg)
 {
 	int fd, nByte;
 	char buff[BUFFER_SIZE];
 
-	if((fd = open_port(1)) < 0){
+	if((fd = open_port(PORT)) < 0){
 		perror("open_port");
 		return 1;
 	}
@@ -209,11 +296,12 @@ void *_DspThreadProc(void *arg)
 		perror("set_com_config");
 		return 1;
 	}
-	printf("DSP PORT OPEN!\n");
+	printf("UART PORT OPEN!\n");
 
     while(1){
 		memset(buff, 0, BUFFER_SIZE);
 		nByte = read(fd, buff, BUFFER_SIZE);
+		printf("\r\n--- %d bytes recieved --- \n\r", nByte);
 		communication(fd, buff);
 	
 	}
@@ -231,11 +319,19 @@ void DspSerialThread()
 }
 
 int main(int argc, char **argv){
+	int cnt=0;
     printf("\r\n--- Entering main() --- \n\r");
 
 	// DSP串口处理子线程
 	DspSerialThread();
-    while(1){}
+	
+    while(1){
+		if(cnt == 20){
+			UartSend();
+			cnt = 0;
+		}
+		cnt ++;
+	}
 
     return 0;
 }
