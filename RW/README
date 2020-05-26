@@ -1,1 +1,7 @@
 This is an example of reading frames from rtsp and write into different types of video format.
+
+eg.writes into an .avi file.
+
+g++ compile: g++ `pkg-config opencv --cflags` main.cpp -o main `pkg-config opencv --libs`
+
+Note: for yuv writes, the suffix should be .avi. Encode type: I420
