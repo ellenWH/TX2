@@ -18,8 +18,8 @@
 #include <stdbool.h>
 #include "uart_api.h"
 
-frame Frame_FDSP;
-control Frame_Control;
+frame Frame_FDSP;	// received from 
+control Frame_Control;	// send to TURNTABLE
 
 int gDspfd;
 
@@ -185,100 +185,69 @@ int communication(int fd, char *buff)
 	int i;
 	int CRC = 0;
 	char data[LEN];
-	if((buff[0] != 0x7E) || (buff[1] != 0x01) || (buff[31] != 0xE7)){
+	if((buff[0] != 0x7E) || (buff[1] != 0x01) || (buff[47] != 0xE7)){
 		printf("Head/Tail error");
 		return;
 	}
 
-	for (i=0;i<LEN-5;i++)
-	{
-		data[i] = buff[i + 2];
-		CRC += data[i];
-	}
-#ifdef CRC_CHECK
-	if (CRC != buff[LEN-2])
-	{
-		//return 1;
-	}
-#endif
-	switch(buff[31]){
-		case 0x03:
-			Frame_Control.yaw = (buff[3] << 24) | (buff[4] << 16) | (buff[5] << 8) | buff[6];
-			if(buff[16] == 0x03)
-				Frame_Control.pitch = (buff[17] << 24) | (buff[18] << 16) | (buff[19] << 8) | buff[20];
-			else
-				printf("pitch data error!")
-			
-		break;
-		
-		case 0x04:
-		break;
-		
-		default:
-		break;
-	
-	}
 	Frame_FDSP.status = data[0];
 
+	Frame_FDSP.axis_x = data[2];
+	Frame_FDSP.axis_x = Frame_FDSP.axis_x << 8 | data[1];
+	
+	Frame_FDSP.axis_y = data[4];
+	Frame_FDSP.axis_y = Frame_FDSP.axis_y << 8 | data[3];
+
+	Frame_FDSP.width = data[6];
+	Frame_FDSP.width = Frame_FDSP.width << 8 | data[5];
+	
+	Frame_FDSP.height = data[8];
+	Frame_FDSP.height = Frame_FDSP.height << 8 | data[7];
+	Frame_FDSP.height/=1.5;
 	printf("status: %d axis_x: %d axis_y: %d width: %d height: %d \n", Frame_FDSP.status, Frame_FDSP.axis_x, Frame_FDSP.axis_y, Frame_FDSP.width, Frame_FDSP.height);
 	
 
 	return 0;
 }
 
-int UartSend(){
-	memset(buff_send, 0, LEN);
+// turn table control
+// TX2 TO TURNTABLE
+int UartSend(int control)
+{
+	char buff[BUFFER_SIZE];
+	buff[0] = 0x7E;
+	buff[1] = 0x01;
+	buff[2] = control;
+		
+	switch(control){
+	case 3:	// positioning
+		buff[3] = Frame_Control.pos_yaw;
+	break;
+		
+	case 4:	// search
+		buff[11] = Frame_Control.spd_yaw;
+	break;
 	
-	switch(buff[2]){
-		case 0x03:	// positioning
-			buff[2] = 0x03;
-
-		break;
-			
-		case 0x04:	// search
-			buff[2] = 0x04;
-
-			
-		break;
-		
-		case 0x05:	// track
-			buff[2] = 0x05;
-
-
-		break;
-		
-		case 0x06:	// sector scan
-			buff[2] = 0x06;
-
-		break;
-		
-		case 0x07:	// circle
-			buff[2] = 0x07;
-
-		break;
-		
-		case 0x08:	// pre_setting point
-			buff[2] = 0x08;
-		break;
-		
-		case 0x09:
-			buff[2] = 0x09;
-		break;
-		
-		case 0x0A:
-		break;
-		
-		case 0x0B:
-		break;
-		
-		case 0x0C:
-		break;
-		
-		default:
-		break;	
+	case 5:	// track
+		buff[3] = track;
+	break;
+	
+	case 6:	// sector scan
+		buff[3] = Frame_Control.yaw_origin;
+	break;
+	
+	case 7:	// circle
+		buff[11] = Frame_Control.spd_yaw;
+	break;
+	
+	case 8:	// pre_setting point
+	break;
+	
+	default:
+	break;
 	}
-	write(gDspfd, buff_send, LEN);
-	
+	write(gDspfd, buff, LEN);
+	return 0;
 }
 
 void *_DspThreadProc(void *arg)
